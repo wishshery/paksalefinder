@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PakSaleFinder — Daily Product Scraper
-Fetches sale products from 7 Pakistani fashion brands via Shopify API
+Fetches sale products from 13 Pakistani fashion brands via Shopify API
 and updates window.LIVE_PRODUCTS in index.html.
 
 Run via GitHub Actions or manually:
@@ -55,6 +55,39 @@ BRANDS = [
         "base_url": "https://www.zellbury.com",
         "is_featured": False,
     },
+    # ── New brands added ──
+    {
+        "name": "Maria B",
+        "base_url": "https://www.mariab.pk",
+        "is_featured": True,
+    },
+    {
+        "name": "Ego",
+        "base_url": "https://wearego.com",
+        "is_featured": False,
+    },
+    {
+        "name": "Sahr Online",
+        "base_url": "https://saharonline.pk",
+        "is_featured": False,
+    },
+    {
+        "name": "Malook",
+        "base_url": "https://www.malook.pk",
+        "is_featured": False,
+    },
+    {
+        "name": "Elan",
+        "base_url": "https://elan.pk",
+        "is_featured": True,
+    },
+    {
+        "name": "Kayseria",
+        "base_url": "https://kayseriastore.com",
+        "is_featured": False,
+    },
+    # NOTE: Khaadi (khaadi.com) does not use Shopify — requires a custom
+    # scraper (Magento/custom platform). Skipped until custom support is added.
 ]
 
 # ──────────────────────────────────────────────
