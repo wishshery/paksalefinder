@@ -1,0 +1,42 @@
+name: Daily Product Update
+
+on:
+  schedule:
+    # 4:00 AM UTC = 9:00 AM Pakistan Standard Time (UTC+5)
+    - cron: "0 4 * * *"
+  workflow_dispatch:   # also allows manual trigger from GitHub Actions tab
+
+permissions:
+  contents: write      # needed to commit & push index.html
+
+jobs:
+  update-products:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run scraper
+        run: python scraper/update.py
+
+      - name: Commit and push updated index.html
+        run: |
+          git config user.name  "PakSaleFinder Bot"
+          git config user.email "bot@paksalefinder.com"
+          git add index.html
+          # Only commit if there are actual changes
+          if git diff --cached --quiet; then
+            echo "No changes detected — nothing to commit."
+          else
+            git commit -m "chore: daily product update $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
