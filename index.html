@@ -679,6 +679,31 @@
       line-height: 1;
     }
     .wishlist-btn:hover { color: var(--sale-red); background: var(--white); }
+    .wishlist-btn.saved { opacity: 1; color: var(--sale-red); }
+    .wishlist-btn.saved:hover { color: #b00020; }
+
+    /* Wishlist toast */
+    #wishlist-toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(60px);
+      background: #1a1a2e;
+      color: #fff;
+      padding: 12px 22px;
+      border-radius: 30px;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 9999;
+      opacity: 0;
+      transition: all 0.3s ease;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #wishlist-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
 
     .card-body {
       padding: 18px;
@@ -1537,6 +1562,7 @@ const SAMPLE_PRODUCTS = [
    STATE
    ══════════════════════════════════════════════════════════ */
 let allProducts = [];
+let savedIds = new Set(JSON.parse(localStorage.getItem('psf_wishlist') || '[]'));
 let appState = {
   category: 'all',
   search:   '',
@@ -1726,7 +1752,7 @@ function renderCard(p) {
           ${featBadge}
           ${hotBadge}
         </div>
-        <button class="wishlist-btn" onclick="event.stopPropagation()" title="Save for later">♡</button>
+        <button class="wishlist-btn${savedIds.has(p.id) ? ' saved' : ''}" onclick="toggleWishlist(event,${p.id})" title="Save for later">${savedIds.has(p.id) ? '♥' : '♡'}</button>
       </div>
       <div class="card-body">
         <div class="card-tags">${tags}</div>
@@ -1955,6 +1981,44 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   loadProducts();
 });
+
+/* ══════════════════════════════════════════════════════════
+   WISHLIST
+   ══════════════════════════════════════════════════════════ */
+function toggleWishlist(event, productId) {
+  event.stopPropagation();
+  const btn = event.currentTarget;
+  const isSaved = savedIds.has(productId);
+
+  if (isSaved) {
+    savedIds.delete(productId);
+    btn.textContent = '♡';
+    btn.classList.remove('saved');
+    showWishlistToast('Removed from saved items');
+  } else {
+    savedIds.add(productId);
+    btn.textContent = '♥';
+    btn.classList.add('saved');
+    showWishlistToast('Saved for later ♥');
+  }
+
+  // Persist to localStorage
+  localStorage.setItem('psf_wishlist', JSON.stringify([...savedIds]));
+}
+
+let _toastTimer = null;
+function showWishlistToast(msg) {
+  let toast = document.getElementById('wishlist-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'wishlist-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+}
 </script>
 </body>
 </html>
