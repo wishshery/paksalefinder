@@ -64,6 +64,18 @@
     <changefreq>daily</changefreq>
     <priority>0.7</priority>
   </url>
+  <url>
+    <loc>https://paksalefinder.com/?brand=Nishat+Linen</loc>
+    <lastmod>2026-03-17</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://paksalefinder.com/?brand=Sapphire</loc>
+    <lastmod>2026-03-17</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
 
   <!-- Category pages -->
   <url>
