@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 PakSaleFinder — Daily Product Scraper
-Fetches sale products from 13 Pakistani fashion brands via Shopify API
-and updates window.LIVE_PRODUCTS in index.html.
+Fetches sale products from 15 Pakistani fashion brands via Shopify API
+(+ custom scrapers for Nishat Linen and Sapphire) and updates
+window.LIVE_PRODUCTS in index.html.
 
 Run via GitHub Actions or manually:
   python scraper/update.py
 """
 
+import html as html_mod
 import json
 import re
 import ssl
@@ -95,7 +97,37 @@ BRANDS = [
     },
     # NOTE: Khaadi (khaadi.com) does not use Shopify — requires a custom
     # scraper (Magento/custom platform). Skipped until custom support is added.
+
+    # NOTE: Nishat Linen and Sapphire use custom scrapers (see below).
+    # They are NOT in this list because they don't use the standard
+    # Shopify compare_at_price flow.
 ]
+
+# ──────────────────────────────────────────────
+# CUSTOM BRAND CONFIGS (non-standard Shopify / non-Shopify)
+# ──────────────────────────────────────────────
+NISHAT_CONFIG = {
+    "name": "Nishat Linen",
+    "base_url": "https://nishatlinen.com",
+    "is_featured": False,
+    # Nishat's "Freedom to Buy" collections contain sale items.
+    # Prices are per-meter/per-piece; discount % is stored as a tag (e.g. "18%").
+    "sale_collections": [
+        "freedom-to-buy",
+    ],
+}
+
+SAPPHIRE_CONFIG = {
+    "name": "Sapphire",
+    "base_url": "https://pk.sapphireonline.pk",
+    "is_featured": True,
+    # Sapphire uses Salesforce Commerce Cloud, not Shopify.
+    # Product data is extracted from the GA4 dataLayer embedded in collection pages.
+    "sale_collections": [
+        "last-chance",
+        "menswear-shop-by-category-sale",
+    ],
+}
 
 # ──────────────────────────────────────────────
 # CATEGORY / FABRIC / SEASON DETECTION
@@ -209,6 +241,21 @@ def fetch_json(url: str, retries: int = 3, delay: float = 2.0, ssl_lenient: bool
     return None
 
 
+def fetch_html(url: str, retries: int = 3, delay: float = 2.0) -> str | None:
+    """Fetch raw HTML from url with retries."""
+    headers = dict(HEADERS)
+    headers["Accept"] = "text/html,application/xhtml+xml"
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.read().decode("utf-8")
+        except Exception as exc:
+            print(f"    HTML fetch error on attempt {attempt+1}: {exc}")
+            time.sleep(delay)
+    return None
+
+
 # ──────────────────────────────────────────────
 # SHOPIFY SCRAPER
 # ──────────────────────────────────────────────
@@ -304,6 +351,248 @@ def scrape_brand(brand: dict, max_pages: int = 20) -> list:
 
 
 # ──────────────────────────────────────────────
+# NISHAT LINEN SCRAPER  (Shopify, but no compare_at_price)
+# ──────────────────────────────────────────────
+def scrape_nishat(config: dict = NISHAT_CONFIG) -> list:
+    """
+    Scrape sale products from Nishat Linen.
+    Nishat does not use compare_at_price.  Instead, sale items live in
+    dedicated collections and the discount percentage is stored as a tag
+    (e.g. "18%").  Prices are in Shopify's money format (8.80 → 880 PKR).
+    For multi-piece products we sum the first-variant price per piece.
+    """
+    base_url = config["base_url"].rstrip("/")
+    brand_name = config["name"]
+    products = []
+
+    print(f"\n[{brand_name}] Scraping {base_url} (custom) …")
+
+    for collection in config["sale_collections"]:
+        page = 1
+        while page <= 10:
+            url = f"{base_url}/collections/{collection}/products.json?limit=250&page={page}"
+            data = fetch_json(url)
+
+            if not data or not data.get("products"):
+                break
+
+            raw = data["products"]
+            print(f"  {collection} page {page}: {len(raw)} products")
+
+            for product in raw:
+                tags = [t.strip().lower() for t in product.get("tags", [])]
+
+                # Extract discount percentage from tags (e.g. "18%", "30%")
+                discount = 0
+                for tag in tags:
+                    m = re.match(r"^(\d{1,2})%$", tag)
+                    if m:
+                        discount = int(m.group(1))
+                        break
+                if discount < 5:
+                    continue
+
+                # Calculate total price from the first variant of each piece
+                # Nishat prices are in Shopify money format — multiply by 100
+                variants = product.get("variants", [])
+                if not variants:
+                    continue
+
+                # For single-piece items, take the first variant price.
+                # For multi-piece, sum the first variant of each option group.
+                seen_options = set()
+                total_price = 0.0
+                for v in variants:
+                    opt1 = v.get("option1", "")
+                    if opt1 not in seen_options:
+                        seen_options.add(opt1)
+                        try:
+                            total_price += float(v.get("price", 0) or 0)
+                        except (ValueError, TypeError):
+                            pass
+
+                # Convert from Shopify money format to PKR
+                sale_price = int(round(total_price * 100))
+                if sale_price <= 0:
+                    continue
+
+                # Derive original price from discount
+                original_price = int(round(sale_price / (1 - discount / 100)))
+
+                # Get image
+                images = product.get("images", [])
+                image_url = images[0].get("src", "") if images else ""
+                if not image_url:
+                    continue
+
+                title  = product.get("title", "").strip()
+                handle = product.get("handle", "")
+
+                products.append({
+                    "brand":            brand_name,
+                    "title":            title,
+                    "image":            image_url,
+                    "original_price":   original_price,
+                    "sale_price":       sale_price,
+                    "discount_percent": discount,
+                    "category":         detect_category(title, tags),
+                    "fabric":           detect_fabric(title, tags),
+                    "season":           detect_season(title, tags),
+                    "product_link":     f"{base_url}/products/{handle}",
+                    "availability":     "in_stock",
+                    "is_featured":      config["is_featured"],
+                    "currency":         "PKR",
+                })
+
+            if len(raw) < 250:
+                break
+            page += 1
+            time.sleep(0.8)
+
+    # Keep top PER_BRAND_LIMIT by discount
+    products.sort(key=lambda p: -p["discount_percent"])
+    if len(products) > PER_BRAND_LIMIT:
+        print(f"  Trimmed from {len(products)} → {PER_BRAND_LIMIT}")
+        products = products[:PER_BRAND_LIMIT]
+
+    print(f"  → {len(products)} sale products kept")
+    return products
+
+
+# ──────────────────────────────────────────────
+# SAPPHIRE SCRAPER  (Salesforce Commerce Cloud)
+# ──────────────────────────────────────────────
+def scrape_sapphire(config: dict = SAPPHIRE_CONFIG) -> list:
+    """
+    Scrape sale products from Sapphire (pk.sapphireonline.pk).
+    Sapphire runs on Salesforce Commerce Cloud.  Product data is extracted
+    from the GA4 dataLayer embedded in each collection page, and images/links
+    are parsed from the surrounding HTML.
+    """
+    base_url = config["base_url"].rstrip("/")
+    brand_name = config["name"]
+    products = []
+
+    print(f"\n[{brand_name}] Scraping {base_url} (custom) …")
+
+    for collection in config["sale_collections"]:
+        start = 0
+        page_size = 60          # Sapphire uses sz= param
+        max_pages = 5           # safety limit
+
+        for page_num in range(max_pages):
+            url = f"{base_url}/collections/{collection}?sz={page_size}&start={start}"
+            html = fetch_html(url)
+            if not html:
+                break
+
+            # ── Extract product data from GA4 dataLayer ──
+            match = re.search(
+                r"ga4DataLayerEvent\s*=\s*(\{.*?\});", html, re.DOTALL
+            )
+            if not match:
+                print(f"  {collection}: no GA4 data found")
+                break
+
+            try:
+                ga4 = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                print(f"  {collection}: GA4 JSON parse error")
+                break
+
+            items = ga4.get("ecommerce", {}).get("items", [])
+            if not items:
+                break
+
+            print(f"  {collection} (start={start}): {len(items)} products")
+
+            # ── Extract product links from HTML ──
+            link_map = {}   # product_id → link path
+            for lid, lpath in re.findall(
+                r'href="(/collections/[^"]+/products/([A-Z0-9_]+)\.html)', html
+            ):
+                pid = lpath  # e.g. WBTM24V60046_999
+                if pid not in link_map:
+                    link_map[pid] = lid
+
+            # ── Extract product images from HTML ──
+            image_list = re.findall(
+                r'data-src="(https://pk\.sapphireonline\.pk/dw/image/[^"]+)"', html
+            )
+            if not image_list:
+                image_list = re.findall(
+                    r'src="(https://pk\.sapphireonline\.pk/dw/image/[^"]+)"', html
+                )
+            # Unescape HTML entities in URLs
+            image_list = [html_mod.unescape(u) for u in image_list]
+
+            for idx, item in enumerate(items):
+                try:
+                    price = float(item.get("price", 0) or 0)
+                    compare = float(item.get("compare_price", 0) or 0)
+                except (ValueError, TypeError):
+                    continue
+
+                if price <= 0:
+                    continue
+
+                # Only include if there's an actual discount
+                if compare > price:
+                    discount = round((compare - price) / compare * 100)
+                else:
+                    # No discount — skip
+                    continue
+
+                if discount < 5 or discount > 90:
+                    continue
+
+                item_id   = item.get("item_id", "")
+                title     = item.get("item_name", "").strip()
+                category1 = item.get("item_category", "")
+                tags      = [category1.lower()] if category1 else []
+
+                # Build product link
+                link_path = link_map.get(item_id, f"/collections/{collection}/products/{item_id}.html")
+                product_link = f"{base_url}{link_path}"
+
+                # Get image (matched by position)
+                image_url = image_list[idx] if idx < len(image_list) else ""
+                if not image_url:
+                    continue
+
+                products.append({
+                    "brand":            brand_name,
+                    "title":            title,
+                    "image":            image_url,
+                    "original_price":   int(round(compare)),
+                    "sale_price":       int(round(price)),
+                    "discount_percent": discount,
+                    "category":         detect_category(title, tags),
+                    "fabric":           detect_fabric(title, tags),
+                    "season":           detect_season(title, tags),
+                    "product_link":     product_link,
+                    "availability":     "in_stock",
+                    "is_featured":      config["is_featured"],
+                    "currency":         "PKR",
+                })
+
+            # Sapphire pages are small; stop if we got fewer items than page size
+            if len(items) < page_size:
+                break
+            start += page_size
+            time.sleep(1.0)
+
+    # Keep top PER_BRAND_LIMIT by discount
+    products.sort(key=lambda p: -p["discount_percent"])
+    if len(products) > PER_BRAND_LIMIT:
+        print(f"  Trimmed from {len(products)} → {PER_BRAND_LIMIT}")
+        products = products[:PER_BRAND_LIMIT]
+
+    print(f"  → {len(products)} sale products kept")
+    return products
+
+
+# ──────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────
 def main():
@@ -324,6 +613,20 @@ def main():
         except Exception as exc:
             print(f"  ERROR scraping {brand['name']}: {exc}")
             failed_brands.append(brand["name"])
+
+    # ── Custom scrapers ──
+    custom_scrapers = [
+        (NISHAT_CONFIG["name"],   lambda: scrape_nishat(NISHAT_CONFIG)),
+        (SAPPHIRE_CONFIG["name"], lambda: scrape_sapphire(SAPPHIRE_CONFIG)),
+    ]
+    for brand_name, scraper_fn in custom_scrapers:
+        try:
+            products = scraper_fn()
+            all_products.extend(products)
+            brands_ok.append(brand_name)
+        except Exception as exc:
+            print(f"  ERROR scraping {brand_name}: {exc}")
+            failed_brands.append(brand_name)
 
     if not all_products:
         print("\nNo products found — aborting to preserve existing data.")
