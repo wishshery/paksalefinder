@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 # LIMITS  (keep page size manageable)
 # ──────────────────────────────────────────────
 PER_BRAND_LIMIT = 150   # max products kept per brand (best discounts first)
-TOTAL_LIMIT     = 1200  # absolute cap across all brands
+TOTAL_LIMIT     = 1500  # absolute cap across all brands
 
 # ──────────────────────────────────────────────
 # BRAND CONFIGURATION
@@ -878,13 +878,34 @@ def main():
         print("\nNo products found — aborting to preserve existing data.")
         sys.exit(1)
 
-    # Global sort: featured brands first, then by discount %
-    all_products.sort(key=lambda p: (-int(p["is_featured"]), -p["discount_percent"]))
-
-    # Global cap
+    # Global cap — guarantee every brand gets at least MIN_PER_BRAND products,
+    # then fill remaining slots by featured-first + highest-discount.
+    MIN_PER_BRAND = 50
     if len(all_products) > TOTAL_LIMIT:
-        print(f"\nTotal trimmed from {len(all_products)} → {TOTAL_LIMIT}")
-        all_products = all_products[:TOTAL_LIMIT]
+        from collections import defaultdict
+        by_brand = defaultdict(list)
+        for p in all_products:
+            by_brand[p["brand"]].append(p)
+        # Sort each brand's products by discount
+        for brand in by_brand:
+            by_brand[brand].sort(key=lambda p: -p["discount_percent"])
+        # Phase 1: guarantee minimum per brand
+        guaranteed = []
+        overflow = []
+        for brand, prods in by_brand.items():
+            guaranteed.extend(prods[:MIN_PER_BRAND])
+            overflow.extend(prods[MIN_PER_BRAND:])
+        # Phase 2: fill remaining slots from overflow
+        overflow.sort(key=lambda p: (-int(p["is_featured"]), -p["discount_percent"]))
+        remaining = TOTAL_LIMIT - len(guaranteed)
+        if remaining > 0:
+            guaranteed.extend(overflow[:remaining])
+        all_products = guaranteed
+        # Final sort for display
+        all_products.sort(key=lambda p: (-int(p["is_featured"]), -p["discount_percent"]))
+        print(f"\nTotal trimmed from {sum(len(v) for v in by_brand.values())} → {len(all_products)}")
+    else:
+        all_products.sort(key=lambda p: (-int(p["is_featured"]), -p["discount_percent"]))
 
     # Assign stable IDs
     for i, p in enumerate(all_products, 1):
