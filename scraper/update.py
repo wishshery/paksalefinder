@@ -95,8 +95,19 @@ BRANDS = [
         "base_url": "https://kayseriastore.com",
         "is_featured": False,
     },
-    # NOTE: Khaadi (khaadi.com) does not use Shopify — requires a custom
-    # scraper (Magento/custom platform). Skipped until custom support is added.
+    {
+        "name": "Zara Shahjahan",
+        "base_url": "https://www.zarashahjahan.com",
+        "is_featured": False,
+    },
+    {
+        "name": "Sania Maskatiya",
+        "base_url": "https://www.saniamaskatiya.com",
+        "is_featured": False,
+    },
+
+    # NOTE: Khaadi uses Salesforce Commerce Cloud — requires a custom
+    # scraper (see KHAADI_CONFIG and scrape_khaadi below).
 
     # NOTE: Nishat Linen and Sapphire use custom scrapers (see below).
     # They are NOT in this list because they don't use the standard
@@ -115,6 +126,21 @@ NISHAT_CONFIG = {
     "sale_collections": [
         "freedom-to-buy",
     ],
+}
+
+KHAADI_CONFIG = {
+    "name": "Khaadi",
+    "base_url": "https://uk.khaadi.com",
+    "is_featured": True,
+    # Khaadi uses Salesforce Commerce Cloud (Demandware).
+    # Product data is parsed from sale page HTML — product tiles contain
+    # images, prices (GBP), discount badges, and product links.
+    # pk.khaadi.com redirects to uk.khaadi.com so prices are in GBP;
+    # we convert to PKR using an approximate exchange rate.
+    "sale_paths": [
+        "sale",
+    ],
+    "gbp_to_pkr": 370,  # approximate conversion rate
 }
 
 SAPPHIRE_CONFIG = {
@@ -241,16 +267,25 @@ def fetch_json(url: str, retries: int = 3, delay: float = 2.0, ssl_lenient: bool
     return None
 
 
-def fetch_html(url: str, retries: int = 3, delay: float = 2.0) -> str | None:
-    """Fetch raw HTML from url with retries."""
+def fetch_html(url: str, retries: int = 3, delay: float = 2.0, ssl_lenient: bool = False) -> str | None:
+    """Fetch raw HTML from url with retries.  Falls back to lenient SSL on cert errors."""
+    ctx = _SSL_LENIENT if ssl_lenient else None
     headers = dict(HEADERS)
     headers["Accept"] = "text/html,application/xhtml+xml"
     for attempt in range(retries):
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
                 return resp.read().decode("utf-8")
+        except ssl.SSLError:
+            if not ssl_lenient:
+                print(f"    SSL error — retrying with lenient SSL …")
+                return fetch_html(url, retries, delay, ssl_lenient=True)
+            print(f"    SSL error (lenient) on attempt {attempt+1}")
+            time.sleep(delay)
         except Exception as exc:
+            if "SSL" in str(exc) and not ssl_lenient:
+                return fetch_html(url, retries, delay, ssl_lenient=True)
             print(f"    HTML fetch error on attempt {attempt+1}: {exc}")
             time.sleep(delay)
     return None
@@ -593,6 +628,201 @@ def scrape_sapphire(config: dict = SAPPHIRE_CONFIG) -> list:
 
 
 # ──────────────────────────────────────────────
+# KHAADI SCRAPER  (Salesforce Commerce Cloud / Demandware)
+# ──────────────────────────────────────────────
+def scrape_khaadi(config: dict = KHAADI_CONFIG) -> list:
+    """
+    Scrape sale products from Khaadi (uk.khaadi.com).
+    Khaadi runs on Salesforce Commerce Cloud.  pk.khaadi.com redirects to
+    uk.khaadi.com, so prices are in GBP.  We convert to PKR using an
+    approximate exchange rate.
+
+    Product data is extracted from the HTML product tiles which contain:
+      - data-productid attribute (SKU)
+      - tile-image src + alt text (image, fabric, category info)
+      - GBP prices (original and sale)
+      - product-sale-label badge (discount %)
+      - product link href
+    """
+    base_url = config["base_url"].rstrip("/")
+    brand_name = config["name"]
+    gbp_to_pkr = config.get("gbp_to_pkr", 370)
+    products = []
+    seen_ids = set()
+
+    print(f"\n[{brand_name}] Scraping {base_url} (custom) …")
+
+    for sale_path in config["sale_paths"]:
+        start = 0
+        page_size = 60
+        max_pages = 25  # safety limit — Khaadi has ~1,300 sale items
+
+        for page_num in range(max_pages):
+            url = f"{base_url}/{sale_path}/?sz={page_size}&start={start}"
+            html = fetch_html(url)
+            if not html:
+                break
+
+            # ── Extract product tiles ──
+            tiles = re.findall(
+                r'<div\s+class="product-tile"[^>]*data-productid="([^"]+)"[^>]*>',
+                html,
+            )
+            if not tiles:
+                print(f"  {sale_path} (start={start}): no product tiles found")
+                break
+
+            print(f"  {sale_path} (start={start}): {len(tiles)} product tiles")
+
+            # ── Extract GA4 data attributes (most reliable source) ──
+            ga4_entries = re.findall(r'data-gtmga4data="([^"]+)"', html)
+
+            # ── Extract images: tile-image src with alt text (1 per tile) ──
+            image_entries = re.findall(
+                r'<img[^>]*class="tile-image[^"]*"[^>]*'
+                r'src="([^"]+)"[^>]*alt="([^"]*)"',
+                html,
+            )
+
+            # ── Extract product links ──
+            link_entries = re.findall(
+                r'href="(/[a-z][a-z0-9\-]*/[A-Z0-9_\-]+\.html)',
+                html,
+            )
+
+            # ── Extract discount badges ──
+            discount_badges = re.findall(
+                r'<span\s+class="product-sale-label"[^>]*>(\d+)%\s*OFF</span>',
+                html, re.IGNORECASE,
+            )
+
+            # Build a de-duplicated link map for product IDs
+            link_map = {}
+            for lpath in link_entries:
+                pid_match = re.search(r'/([A-Z0-9_\-]+)\.html', lpath)
+                if pid_match:
+                    pid = pid_match.group(1)
+                    if pid not in link_map:
+                        link_map[pid] = lpath
+
+            # Build image map: 1 tile-image per product tile
+            image_map = {}  # index → (url, alt)
+            for img_idx, (img_url, img_alt) in enumerate(image_entries):
+                image_map[img_idx] = (
+                    html_mod.unescape(img_url),
+                    html_mod.unescape(img_alt),
+                )
+
+            # Parse GA4 data for sale prices
+            ga4_map = {}  # product_id → price
+            for ga4_raw in ga4_entries:
+                try:
+                    ga4_obj = json.loads(html_mod.unescape(ga4_raw))
+                    pid = ga4_obj.get("item_id", "")
+                    price = float(ga4_obj.get("price", 0) or 0)
+                    if pid and price > 0:
+                        ga4_map[pid] = price
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+
+            for idx, product_id in enumerate(tiles):
+                if product_id in seen_ids:
+                    continue
+                seen_ids.add(product_id)
+
+                # Get image and alt text
+                img_data = image_map.get(idx)
+                if not img_data:
+                    continue
+                image_url, alt_text = img_data
+
+                if not image_url:
+                    continue
+
+                # Parse alt text for title/fabric info
+                # Format: "Embroidered | Karandi | Kurta | GBP 7.50"
+                alt_parts = [p.strip() for p in alt_text.split("|")]
+                # Remove the GBP price part from the end
+                alt_clean = [p for p in alt_parts if "GBP" not in p]
+                title = alt_clean[-1] if alt_clean else product_id
+                title = title.strip()
+                if not title:
+                    title = product_id
+
+                # Get sale price from GA4 data (most reliable)
+                sale_gbp = ga4_map.get(product_id, 0)
+
+                # Get discount from badge
+                if idx < len(discount_badges):
+                    discount = int(discount_badges[idx])
+                else:
+                    continue  # skip if no discount badge
+
+                if discount < 5 or discount > 95:
+                    continue
+
+                # Calculate original price from sale price and discount
+                if sale_gbp > 0:
+                    orig_gbp = sale_gbp / (1 - discount / 100)
+                else:
+                    # Fallback: try to extract from alt text
+                    price_match = re.search(r'GBP\s*([\d,.]+)', alt_text)
+                    if price_match:
+                        sale_gbp = float(price_match.group(1).replace(",", ""))
+                        orig_gbp = sale_gbp / (1 - discount / 100)
+                    else:
+                        continue
+
+                if sale_gbp <= 0:
+                    continue
+
+                # Convert GBP to PKR
+                sale_pkr = int(round(sale_gbp * gbp_to_pkr))
+                orig_pkr = int(round(orig_gbp * gbp_to_pkr))
+
+                # Build product link
+                link_path = link_map.get(product_id, f"/{sale_path}/{product_id}.html")
+                product_link = f"{base_url}{link_path}"
+
+                # Build tags from alt text parts for category/fabric detection
+                tags = [p.lower() for p in alt_clean]
+
+                display_title = " | ".join(alt_clean) if len(alt_clean) > 1 else title
+
+                products.append({
+                    "brand":            brand_name,
+                    "title":            display_title,
+                    "image":            image_url,
+                    "original_price":   orig_pkr,
+                    "sale_price":       sale_pkr,
+                    "discount_percent": discount,
+                    "category":         detect_category(title, tags),
+                    "fabric":           detect_fabric(title, tags),
+                    "season":           detect_season(title, tags),
+                    "product_link":     product_link,
+                    "availability":     "in_stock",
+                    "is_featured":      config["is_featured"],
+                    "currency":         "PKR",
+                })
+
+            # Stop if very few tiles (Khaadi sometimes returns slightly fewer
+            # than page_size even on non-last pages, so only stop on truly empty)
+            if len(tiles) < page_size // 2:
+                break
+            start += page_size
+            time.sleep(1.0)
+
+    # Keep top PER_BRAND_LIMIT by discount
+    products.sort(key=lambda p: -p["discount_percent"])
+    if len(products) > PER_BRAND_LIMIT:
+        print(f"  Trimmed from {len(products)} → {PER_BRAND_LIMIT}")
+        products = products[:PER_BRAND_LIMIT]
+
+    print(f"  → {len(products)} sale products kept")
+    return products
+
+
+# ──────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────
 def main():
@@ -618,6 +848,7 @@ def main():
     custom_scrapers = [
         (NISHAT_CONFIG["name"],   lambda: scrape_nishat(NISHAT_CONFIG)),
         (SAPPHIRE_CONFIG["name"], lambda: scrape_sapphire(SAPPHIRE_CONFIG)),
+        (KHAADI_CONFIG["name"],   lambda: scrape_khaadi(KHAADI_CONFIG)),
     ]
     for brand_name, scraper_fn in custom_scrapers:
         try:

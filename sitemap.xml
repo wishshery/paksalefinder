@@ -77,6 +77,25 @@
     <priority>0.8</priority>
   </url>
 
+  <url>
+    <loc>https://paksalefinder.com/?brand=Khaadi</loc>
+    <lastmod>2026-03-22</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://paksalefinder.com/?brand=Zara+Shahjahan</loc>
+    <lastmod>2026-03-22</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://paksalefinder.com/?brand=Sania+Maskatiya</loc>
+    <lastmod>2026-03-22</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+
   <!-- Category pages -->
   <url>
     <loc>https://paksalefinder.com/?category=spring</loc>
