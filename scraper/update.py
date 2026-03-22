@@ -97,8 +97,10 @@ BRANDS = [
     },
     {
         "name": "Zara Shahjahan",
-        "base_url": "https://www.zarashahjahan.com",
+        "base_url": "https://uk.zarashahjahan.com",
         "is_featured": False,
+        "gbp_to_pkr": 370,
+        "sale_collection": "sale",
     },
     {
         "name": "Sania Maskatiya",
@@ -299,12 +301,17 @@ def scrape_brand(brand: dict, max_pages: int = 20) -> list:
     base_url = brand["base_url"].rstrip("/")
     brand_name = brand["name"]
     products = []
+    gbp_rate = brand.get("gbp_to_pkr", 0)  # 0 = prices already in PKR
+    sale_collection = brand.get("sale_collection", "")
 
     print(f"\n[{brand_name}] Scraping {base_url} …")
 
     page = 1
     while page <= max_pages:
-        url = f"{base_url}/products.json?limit=250&page={page}"
+        if sale_collection:
+            url = f"{base_url}/collections/{sale_collection}/products.json?limit=250&page={page}"
+        else:
+            url = f"{base_url}/products.json?limit=250&page={page}"
         data = fetch_json(url)
 
         if not data or not data.get("products"):
@@ -351,12 +358,20 @@ def scrape_brand(brand: dict, max_pages: int = 20) -> list:
                     tags   = [t.lower() for t in product.get("tags", [])]
                     avail  = variant.get("available", True)
 
+                    # Convert GBP → PKR if needed
+                    if gbp_rate:
+                        final_price = int(round(price * gbp_rate))
+                        final_compare = int(round(compare_at * gbp_rate))
+                    else:
+                        final_price = int(round(price))
+                        final_compare = int(round(compare_at))
+
                     products.append({
                         "brand":            brand_name,
                         "title":            title,
                         "image":            image_url,
-                        "original_price":   int(round(compare_at)),
-                        "sale_price":       int(round(price)),
+                        "original_price":   final_compare,
+                        "sale_price":       final_price,
                         "discount_percent": discount,
                         "category":         detect_category(title, tags),
                         "fabric":           detect_fabric(title, tags),
