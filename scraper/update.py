@@ -951,7 +951,13 @@ def main():
     }
     new_meta_line = f"window.LIVE_META = {json.dumps(meta, ensure_ascii=False, separators=(',', ':'))};"
     pattern_meta  = r"window\.LIVE_META\s*=\s*\{.*?\};"
-    updated_html, _ = re.subn(pattern_meta, new_meta_line, updated_html, flags=re.DOTALL)
+    updated_html, meta_count = re.subn(pattern_meta, new_meta_line, updated_html, flags=re.DOTALL)
+    if meta_count == 0:
+        print("\nWARNING: window.LIVE_META not found in index.html — meta block skipped")
+
+    # ── Patch "Last scraped" comment ──
+    pattern_comment = r"Last scraped: \d+ \w+ \d{4}"
+    updated_html = re.sub(pattern_comment, f"Last scraped: {pk_date}", updated_html)
 
     with open(index_path, "w", encoding="utf-8") as f:
         f.write(updated_html)
