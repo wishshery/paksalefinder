@@ -30,6 +30,12 @@ TOTAL_LIMIT     = 1500  # absolute cap across all brands
 # ──────────────────────────────────────────────
 BRANDS = [
     {
+        "name": "Almirah",
+        "base_url": "https://almirah.com.pk",
+        "is_featured": True,
+        "sale_collection": "sale",
+    },
+    {
         "name": "Sana Safinaz",
         "base_url": "https://www.sanasafinaz.com",
         "is_featured": True,
@@ -837,6 +843,106 @@ def scrape_khaadi(config: dict = KHAADI_CONFIG) -> list:
     return products
 
 
+
+# ──────────────────────────────────────────────
+# STRUCTURAL PATCHES  (idempotent — applied every run so the
+# index.html template stays in sync with BRANDS even on cold deploys)
+# ──────────────────────────────────────────────
+def patch_index_structure(html: str) -> tuple[str, list[str]]:
+    """Apply Almirah brand structural changes to index.html.
+    Idempotent: each patch checks for sentinel before applying.
+    Returns (new_html, list_of_applied_patch_names)."""
+    import re
+    applied = []
+
+    # 1. Default appState.brand → Almirah
+    if "brand:    'Almirah'" not in html and "brand:    'Maria B'" in html:
+        html = html.replace(
+            "brand:    'Maria B'",
+            "brand:    'Almirah'",
+            1,
+        )
+        applied.append("appState.brand=Almirah")
+
+    # 2. Desktop <select id="brandFilter">: ensure Almirah selected first
+    if "<option selected>Almirah</option>" not in html:
+        # Insert Almirah right after All Brands; remove selected from Maria B
+        html = re.sub(
+            r'(<option value="">All Brands</option>)\s*\n\s*<option(?:\s+selected)?>Sana Safinaz</option>',
+            r'\1\n      <option selected>Almirah</option>\n      <option>Sana Safinaz</option>',
+            html, count=1,
+        )
+        html = re.sub(
+            r'<option selected>Maria B</option>',
+            '<option>Maria B</option>',
+            html,
+        )
+        applied.append("brandFilter dropdown")
+
+    # 3. Mobile-nav brand tags: ensure Almirah span exists with mobile-brand-tag class
+    if "filterByBrand('Almirah')" not in html:
+        # Insert Almirah as the first span inside mobile-nav-brand-tags
+        almirah_span = (
+            "<span class=\"mobile-brand-tag\" "
+            "onclick=\"filterByBrand('Almirah');closeMobileNav()\">Almirah</span>"
+        )
+        html = html.replace(
+            '<div class="mobile-nav-brand-tags">',
+            '<div class="mobile-nav-brand-tags">\n      ' + almirah_span,
+            1,
+        )
+        applied.append("mobile-nav Almirah tag")
+
+    # 4. Normalize all mobile-nav spans to use class="mobile-brand-tag"
+    # (some had no class, only the last 4 did — mobile rendering bug)
+    def _normalize_span(m):
+        cls_part = m.group(1) or ""
+        if "mobile-brand-tag" not in cls_part:
+            return f'<span class="mobile-brand-tag"{m.group(2)}>'
+        return m.group(0)
+    new_html = re.sub(
+        r'<span(\s+class="[^"]*")?(\s+onclick="filterByBrand\([^)]+\);closeMobileNav\(\)")>',
+        _normalize_span,
+        html,
+    )
+    if new_html != html:
+        html = new_html
+        applied.append("normalize mobile-nav span classes")
+
+    # 5. Inject .mobile-brand-tag CSS (44px tap target, tap-highlight)
+    css_sentinel = ".mobile-brand-tag,_PSF_PATCH_v1"
+    if css_sentinel not in html and ".mobile-nav-brand-tags span:hover" in html:
+        css_anchor = ".mobile-nav-brand-tags span:hover { border-color: var(--gold); color: var(--gold); background: var(--gold-pale); }"
+        if css_anchor in html:
+            extra = (
+                "\n    /* " + css_sentinel + " */\n"
+                "    .mobile-nav-brand-tags .mobile-brand-tag {"
+                " display:flex; align-items:center; min-height:44px; padding:10px 16px;"
+                " border:1px solid var(--border); border-radius:20px; font-size:12px;"
+                " color:var(--text-light); cursor:pointer;"
+                " -webkit-tap-highlight-color: rgba(0,0,0,0.05); touch-action: manipulation; }\n"
+                "    .mobile-nav-brand-tags .mobile-brand-tag:hover,"
+                " .mobile-nav-brand-tags .mobile-brand-tag:active {"
+                " border-color: var(--gold); color: var(--gold); background: var(--gold-pale); }"
+            )
+            html = html.replace(css_anchor, css_anchor + extra)
+            applied.append("mobile-brand-tag CSS")
+
+    # 6. SEO meta: best-effort string replacements (idempotent — checks before replacing)
+    seo_swaps = [
+        ("Maria B, Sana Safinaz, Asim Jofa & More",
+         "Almirah, Maria B, Sana Safinaz, Asim Jofa & More"),
+        ("Pakistani designer sale, Maria B sale",
+         "Pakistani designer sale, Almirah sale, Maria B sale"),
+    ]
+    for old_s, new_s in seo_swaps:
+        if old_s in html and new_s not in html:
+            html = html.replace(old_s, new_s)
+            applied.append(f"SEO: {old_s[:30]}…")
+
+    return html, applied
+
+
 # ──────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────
@@ -925,6 +1031,13 @@ def main():
     except FileNotFoundError:
         print(f"\nERROR: {index_path} not found. Run from repo root.")
         sys.exit(1)
+
+    # ── Apply structural patches (idempotent) ──
+    html, structural_patches = patch_index_structure(html)
+    if structural_patches:
+        print(f"\n✓ Structural patches applied: {', '.join(structural_patches)}")
+    else:
+        print("\n  (Structural patches already applied — no changes)")
 
     # ── Patch window.LIVE_PRODUCTS ──
     products_json = json.dumps(all_products, ensure_ascii=False, separators=(",", ":"))
