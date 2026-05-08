@@ -956,6 +956,7 @@ def patch_index_structure(html: str) -> tuple[str, list[str]]:
         ("16 Brands",   "17 Brands"),
         ("17 top brands", "18 top brands"),
         ("17 Top Brands", "18 Top Brands"),
+        ("17 top Pakistani", "18 top Pakistani"),
     ]
     for old_s, new_s in counter_swaps:
         if old_s in html:
