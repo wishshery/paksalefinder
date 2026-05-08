@@ -940,6 +940,28 @@ def patch_index_structure(html: str) -> tuple[str, list[str]]:
             html = html.replace(old_s, new_s)
             applied.append(f"SEO: {old_s[:30]}…")
 
+    # 7. Hero brands chip row: insert Almirah as the first hero-brand-tag
+    if 'filterByBrand(\'Almirah\')">Almirah</span>' not in html:
+        almirah_hero = '<span class="hero-brand-tag" onclick="filterByBrand(\'Almirah\')">Almirah</span>'
+        html = html.replace(
+            '<div class="hero-brands">\n      ',
+            '<div class="hero-brands">\n      ' + almirah_hero + '\n      ',
+            1,
+        )
+        applied.append("hero-brands Almirah chip")
+
+    # 8. Hardcoded brand counters: bump "16 BRANDS" / "17 top brands" → 17 / 18
+    counter_swaps = [
+        ("16 BRANDS",   "17 BRANDS"),
+        ("16 Brands",   "17 Brands"),
+        ("17 top brands", "18 top brands"),
+        ("17 Top Brands", "18 Top Brands"),
+    ]
+    for old_s, new_s in counter_swaps:
+        if old_s in html:
+            html = html.replace(old_s, new_s)
+            applied.append(f"counter: {old_s} → {new_s}")
+
     return html, applied
 
 
