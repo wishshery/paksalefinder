@@ -900,6 +900,27 @@ def patch_index_structure(html: str) -> tuple[str, list[str]]:
         )
         applied.append("mobile-nav Almirah tag")
 
+    # 3b. Mobile-nav: insert Junaid Jamshed (after Almirah)
+    if "filterByBrand('Junaid Jamshed')" not in html:
+        jj_mobile = (
+            '<span class="mobile-brand-tag" '
+            'onclick="filterByBrand(\'Junaid Jamshed\');closeMobileNav()">Junaid Jamshed</span>'
+        )
+        almirah_mobile = '<span class="mobile-brand-tag" onclick="filterByBrand(\'Almirah\');closeMobileNav()">Almirah</span>'
+        if almirah_mobile in html:
+            html = html.replace(
+                almirah_mobile + '\n      ',
+                almirah_mobile + '\n      ' + jj_mobile + '\n      ',
+                1,
+            )
+        else:
+            html = html.replace(
+                '<div class="mobile-nav-brand-tags">',
+                '<div class="mobile-nav-brand-tags">\n      ' + jj_mobile,
+                1,
+            )
+        applied.append("mobile-nav Junaid Jamshed tag")
+
     # 4. Normalize all mobile-nav spans to use class="mobile-brand-tag"
     # (some had no class, only the last 4 did — mobile rendering bug)
     def _normalize_span(m):
@@ -956,6 +977,25 @@ def patch_index_structure(html: str) -> tuple[str, list[str]]:
             1,
         )
         applied.append("hero-brands Almirah chip")
+
+    # 7b. Hero brands: insert Junaid Jamshed (after Almirah, before Sana Safinaz)
+    if 'filterByBrand(\'Junaid Jamshed\')">Junaid Jamshed</span>' not in html:
+        jj_hero = '<span class="hero-brand-tag" onclick="filterByBrand(\'Junaid Jamshed\')">Junaid Jamshed</span>'
+        # Insert after the Almirah chip if present, otherwise at the start of hero-brands
+        almirah_chip_marker = '<span class="hero-brand-tag" onclick="filterByBrand(\'Almirah\')">Almirah</span>'
+        if almirah_chip_marker in html:
+            html = html.replace(
+                almirah_chip_marker + '\n      ',
+                almirah_chip_marker + '\n      ' + jj_hero + '\n      ',
+                1,
+            )
+        else:
+            html = html.replace(
+                '<div class="hero-brands">\n      ',
+                '<div class="hero-brands">\n      ' + jj_hero + '\n      ',
+                1,
+            )
+        applied.append("hero-brands Junaid Jamshed chip")
 
     # 8. Hardcoded brand counters: bump "16 BRANDS" / "17 top brands" → 17 / 18
     counter_swaps = [
