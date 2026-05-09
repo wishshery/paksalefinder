@@ -114,7 +114,14 @@ BRANDS = [
         "is_featured": False,
     },
 
-    # NOTE: Khaadi uses Salesforce Commerce Cloud — requires a custom
+    {
+        "name": "Junaid Jamshed",
+        "base_url": "https://www.junaidjamshed.com",
+        "is_featured": False,
+        "sale_collection": "sale",
+    },
+
+        # NOTE: Khaadi uses Salesforce Commerce Cloud — requires a custom
     # scraper (see KHAADI_CONFIG and scrape_khaadi below).
 
     # NOTE: Nishat Linen and Sapphire use custom scrapers (see below).
@@ -957,11 +964,49 @@ def patch_index_structure(html: str) -> tuple[str, list[str]]:
         ("17 top brands", "18 top brands"),
         ("17 Top Brands", "18 Top Brands"),
         ("17 top Pakistani", "18 top Pakistani"),
+        ("17 BRANDS",   "18 BRANDS"),
+        ("17 Brands",   "18 Brands"),
+        ("18 top brands", "19 top brands"),
+        ("18 top Pakistani", "19 top Pakistani"),
     ]
     for old_s, new_s in counter_swaps:
         if old_s in html:
             html = html.replace(old_s, new_s)
             applied.append(f"counter: {old_s} → {new_s}")
+
+    # 9. Visual indicator: add "active" class to chip matching appState.brand on load
+    active_sentinel = "_PSF_ACTIVE_v1"
+    if active_sentinel not in html:
+        active_css = (
+            "\n/* " + active_sentinel + " */\n"
+            ".hero-brand-tag.active, .mobile-brand-tag.active {"
+            " background: var(--gold-pale) !important;"
+            " border-color: var(--gold) !important;"
+            " color: var(--gold) !important;"
+            " font-weight: 600 !important; }\n"
+        )
+        active_js = (
+            "<script>/* " + active_sentinel + " */"
+            "document.addEventListener('DOMContentLoaded',function(){"
+            "var b=(window.appState&&window.appState.brand)||"
+            "new URLSearchParams(location.search).get('brand');"
+            "if(!b)return;"
+            "document.querySelectorAll('.hero-brand-tag,.mobile-brand-tag').forEach(function(s){"
+            "if(s.textContent.trim()===b)s.classList.add('active');});"
+            "var orig=window.filterByBrand;"
+            "if(typeof orig==='function'){window.filterByBrand=function(br){"
+            "document.querySelectorAll('.hero-brand-tag.active,.mobile-brand-tag.active').forEach(function(s){s.classList.remove('active');});"
+            "document.querySelectorAll('.hero-brand-tag,.mobile-brand-tag').forEach(function(s){if(s.textContent.trim()===br)s.classList.add('active');});"
+            "return orig(br);};}"
+            "});</script>\n"
+        )
+        # Inject CSS into <style> block (before closing </style> of first style block)
+        if "</style>" in html:
+            html = html.replace("</style>", active_css + "</style>", 1)
+        # Inject JS right before </body>
+        if "</body>" in html:
+            html = html.replace("</body>", active_js + "</body>", 1)
+        applied.append("active brand highlight")
 
     return html, applied
 
