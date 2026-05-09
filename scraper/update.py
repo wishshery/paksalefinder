@@ -862,29 +862,60 @@ def patch_index_structure(html: str) -> tuple[str, list[str]]:
     import re
     applied = []
 
-    # 1. Default appState.brand → Almirah
-    if "brand:    'Almirah'" not in html and "brand:    'Maria B'" in html:
-        html = html.replace(
-            "brand:    'Maria B'",
-            "brand:    'Almirah'",
-            1,
-        )
-        applied.append("appState.brand=Almirah")
+    # 1+2. Default brand rotation: pick today's featured brand by 2-day cycle
+    # (deterministic random from full BRANDS list, including custom-scraper brands)
+    import hashlib
+    from datetime import datetime as _dt, timezone as _tz
+    _all_brands = [b["name"] for b in BRANDS] + [
+        NISHAT_CONFIG["name"], KHAADI_CONFIG["name"], SAPPHIRE_CONFIG["name"],
+    ]
+    _epoch = _dt(2026, 1, 1, tzinfo=_tz.utc)
+    _days = (_dt.now(_tz.utc) - _epoch).days
+    _cycle = _days // 2
+    _h = int(hashlib.sha1(str(_cycle).encode()).hexdigest(), 16)
+    _featured = _all_brands[_h % len(_all_brands)]
 
-    # 2. Desktop <select id="brandFilter">: ensure Almirah selected first
-    if "<option selected>Almirah</option>" not in html:
-        # Insert Almirah right after All Brands; remove selected from Maria B
-        html = re.sub(
-            r'(<option value="">All Brands</option>)\s*\n\s*<option(?:\s+selected)?>Sana Safinaz</option>',
-            r'\1\n      <option selected>Almirah</option>\n      <option>Sana Safinaz</option>',
-            html, count=1,
-        )
-        html = re.sub(
-            r'<option selected>Maria B</option>',
-            '<option>Maria B</option>',
-            html,
-        )
-        applied.append("brandFilter dropdown")
+    # Ensure ALL brands have an <option> in the brandFilter dropdown (insert any missing)
+    sel_match = re.search(r'(<select[^>]*id="brandFilter"[^>]*>)(.*?)(</select>)', html, re.DOTALL)
+    if sel_match:
+        select_inner = sel_match.group(2)
+        for _bn in _all_brands:
+            if f">{_bn}</option>" not in select_inner:
+                # Insert just before </select>, with consistent indent
+                html = html.replace(
+                    sel_match.group(3),
+                    f"<option>{_bn}</option>\n      " + sel_match.group(3),
+                    1,
+                )
+                applied.append(f"dropdown +{_bn}")
+                # refresh select_inner snapshot for subsequent iterations
+                sel_match = re.search(r'(<select[^>]*id="brandFilter"[^>]*>)(.*?)(</select>)', html, re.DOTALL)
+                select_inner = sel_match.group(2) if sel_match else select_inner
+
+    # Strip ANY existing selected attribute from brand dropdown options
+    new_html = re.sub(r'<option\s+selected>([^<]+)</option>', r'<option>\1</option>', html)
+    if new_html != html:
+        html = new_html
+
+    # Mark today's featured brand as <option selected>
+    new_html = re.sub(
+        r'<option>' + re.escape(_featured) + r'</option>',
+        f'<option selected>{_featured}</option>',
+        html, count=1,
+    )
+    if new_html != html:
+        html = new_html
+        applied.append(f"dropdown selected={_featured}")
+
+    # Update appState.brand default to today's featured brand
+    new_html = re.sub(
+        r"(brand:\s+')[^']+(',)",
+        lambda mm: mm.group(1) + _featured + mm.group(2),
+        html, count=1,
+    )
+    if new_html != html:
+        html = new_html
+        applied.append(f"appState.brand={_featured} (cycle {_cycle})")
 
     # 3. Mobile-nav brand tags: ensure Almirah span exists with mobile-brand-tag class
     if "filterByBrand('Almirah')" not in html:
