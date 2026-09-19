@@ -41,6 +41,7 @@ function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = me
 function savedCounts() {
   const visibleSaved = products.filter(p => saved.has(p.key)).length;
   $$('[data-saved-count]').forEach(el => el.textContent = visibleSaved);
+  $$('[data-saved]').forEach(el => el.setAttribute('aria-label', `Saved finds (${visibleSaved})`));
 }
 function productCard(p, i) {
   const article = element('article', 'product'); article.dataset.key = p.key;
