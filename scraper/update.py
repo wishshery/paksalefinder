@@ -859,6 +859,10 @@ def patch_index_structure(html: str) -> tuple[str, list[str]]:
     """Apply Almirah brand structural changes to index.html.
     Idempotent: each patch checks for sentinel before applying.
     Returns (new_html, list_of_applied_patch_names)."""
+    # The responsive UI builds brands from LIVE_META and owns its filter state.
+    # Keep daily data injection below, but never apply legacy layout/brand patches.
+    if 'data-ui="sale-finder-v2"' in html:
+        return html, []
     import re
     applied = []
 
